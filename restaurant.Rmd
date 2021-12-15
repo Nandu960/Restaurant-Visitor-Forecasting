@@ -1,0 +1,676 @@
+---
+title: "Restaurant"
+author: "Nandavardhan Chirumamilla"
+date: "31/10/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(lubridate)
+```
+
+```{r}
+#Loading all data files
+
+air_store_info <- read_csv("air_store_info.csv",show_col_types = FALSE,col_types = cols())
+air_reserve_data <- read_csv("air_reserve.csv",show_col_types = FALSE,col_types = cols())
+air_visit_data <- read_csv("air_visit_data.csv",show_col_types = FALSE,col_types = cols())
+date_info <- read_csv("date_info.csv",show_col_types = FALSE,col_types = cols())
+hpg_reserve <- read_csv("hpg_reserve.csv",show_col_types = FALSE,col_types = cols())
+hpg_store_info <- read_csv("hpg_store_info.csv",show_col_types = FALSE,col_types = cols())
+store_id_relation <- read_csv("store_id_relation.csv",show_col_types = FALSE,col_types = cols())
+
+test <- read_csv("sample_submission.csv")
+
+
+```
+
+
+# Exploration of Air Store Data
+
+```{r cars}
+
+## Converting Dates to Date Type
+
+air_reserve_data$visit_datetime <- as.Date(air_reserve_data$visit_datetime)
+air_reserve_data$reserve_datetime <- as.Date(air_reserve_data$reserve_datetime)
+
+air_visit_data$visit_date <- as.Date(air_visit_data$visit_date)
+
+
+```
+
+```{r}
+# Performing Inner Join on air_reserve_data and air_store_info to create a single table 
+# that contains information of all reservations along with corresponding store information
+
+air_reservation <- inner_join(air_reserve_data,air_store_info,by=c("air_store_id"="air_store_id"))
+
+
+date_info$reserve_datetime = date_info$calendar_date
+air_reservation <- inner_join(air_reservation,date_info) 
+## Similarly on air_visit_data and air_store_info
+
+air_visited<- inner_join(air_visit_data,air_store_info,by=c("air_store_id"="air_store_id"))
+date_info$visit_date = date_info$reserve_datetime
+air_visited <- inner_join(air_visited,date_info) 
+
+```
+
+```{r}
+
+head(air_reservation)
+
+```
+
+
+```{r}
+# Visualizing train,validation and test intervals
+temp <- air_visit_data %>%
+  rename(date = visit_date) %>%
+  distinct(date) %>%
+  mutate(dset = "train")
+
+temp <- mutate(temp,dset = ifelse(date >= as.Date("2017-03-30"),"val","train"))
+
+bar <- test %>%
+  separate(id, c("temp", "bar", "date"), sep = "_") %>%
+  mutate(date = ymd(date)) %>%
+  distinct(date) %>%
+  mutate(dset = "test")
+temp <- temp %>%
+  bind_rows(bar) %>%
+  mutate(year = year(date))
+year(temp$date) <- 2017
+
+temp %>%
+    filter(!is.na(date)) %>%
+    mutate(year = fct_relevel(as.factor(year), c("2017","2016"))) %>%
+    ggplot(aes(date, year, color = dset)) +
+    geom_point(shape = "|", size = 10) +
+    scale_x_date(date_labels = "%B", date_breaks = "1 month") +
+    #scale_y_reverse() +
+    theme(legend.position = "bottom", axis.text.x  = element_text(angle=45, hjust=1, vjust=0.9)) +
+    labs(color = "Data set",title="Split of Data into Train,Validation and Test") +
+    guides(color = guide_legend(override.aes = list(size = 4, pch = 15)))
+
+
+```
+
+
+## Exploration of Air Reservation Data
+
+```{r}
+ 
+print(paste("Number of unique restaurants in the air reserve data ",length(unique(air_reservation$air_store_id))))
+print(paste("The air reserve data contains reservation from ",min(air_reservation$reserve_datetime),"to",max(air_reservation$reserve_datetime)))
+print(paste("In the above time period, the total number of reservations is ",length(air_reservation$air_store_id),"for a total of ",format(sum(air_reservation$reserve_visitors),big.mark=",",scientific=FALSE)," customers"))
+print(paste("Total number of areas in which reservations were made through air reserve",length(unique(air_reservation$air_area_name))))
+print(paste("Total number of Genres in which reservations were made through air reserve",length(unique(air_reservation$air_genre_name))))
+```
+
+```{r}
+# Reservation Datetime vs Number of Customers
+group_by(air_reservation,reserve_datetime) %>%
+  summarise(count= sum(reserve_visitors)) %>%
+  ggplot()+
+  geom_line(mapping = aes(x=reserve_datetime,y=count))+
+  labs(title="Number of Customers who have reserved a table \n from  2016-01-01 to 2017-04-22",y="No. of Customers",x="Date of Reservation")
+
+```
+
+```{r}
+# Number of Visitors Per Reservation distribution
+ggplot(air_reservation)+
+  geom_histogram(mapping=aes(reserve_visitors))+
+  xlim(0,50)+
+  labs(title = "Distribution of How many guests a reservation was being made for",x="Number of Guests in a reservation")
+
+```
+
+```{r}
+
+# Area vs  vs Number of Reservations
+group_by(air_reservation,air_area_name) %>%
+  ggplot()+
+  geom_bar(mapping = aes(x=air_area_name))+
+  coord_flip()+
+  labs(title="Distribution of reservations based on area name ",x="Area Name",y="Number of Reservations made")
+
+
+```
+
+```{r}
+  
+#Area vs number of People
+group_by(air_reservation,air_area_name) %>%
+  summarise(num= sum(reserve_visitors)) %>%
+  ggplot()+
+  geom_bar(mapping = aes(x=air_area_name,y=num),stat="identity")+
+  labs(y="Number of Visitors through reservations",x = "Area Name",title = "Number of visitors who have made \nreservations vs Area Name")+
+  coord_flip()
+
+```
+
+
+
+
+```{r}
+# Reservation Visit Date vs Number of Customers
+
+air_reservation %>%
+  mutate(visit_datetime =  as.Date(air_reservation$visit_datetime)) %>%
+  group_by(visit_datetime) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot(aes(visit_datetime, all_visitors)) +
+  geom_line() +
+  labs(x = " Visit date as per the reservation",y="Number of Visitors",title="A sudden increase of the Number of visitors is noticed")
+
+
+```
+
+
+```{r}
+air_reservation %>%
+  mutate(hourdiff = difftime(air_reservation$visit_datetime,air_reservation$reserve_datetime,unit="hours")) %>%
+  filter( hourdiff < 24*10) %>%
+  group_by(hourdiff) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot(aes(hourdiff, all_visitors)) +
+  geom_col(fill="darkgreen") +
+  labs(x = "Time from reservation to visit (in hours)",y="Number of Visitors (through reservation)")
+
+
+```
+
+```{r}
+# Times for which the reservations are made
+air_reserve_data %>%
+  mutate(visit_hour = format(as.POSIXct(air_reserve_data$reserve_datetime), format = "%H")) %>%
+  group_by(visit_hour) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot()+
+  geom_col(aes(visit_hour,all_visitors))
+
+
+
+```
+
+
+
+
+## Exploration of Air Visitation Data
+
+```{r}
+ 
+print(paste("Number of air restaurants : ",length(unique(air_visited$air_store_id))))
+print(paste("The air reserve data contains visitations from ",min(air_visited$visit_date),"to",max(air_visited$visit_date)))
+print(paste("In the above time period, the total number of visits are ",length(air_visited$air_store_id),"for a total of ",format(sum(air_visited$visitors),big.mark=",",scientific=FALSE)," customers"))
+print(paste("Total number of areas in which visits were made",length(unique(air_visited$air_area_name))))
+print(paste("Total number of Genres visited by customers",length(unique(air_visited$air_genre_name))))
+```
+
+```{r}
+
+# Average of log transformation of Number of visitors vs Each day of the week
+air_visited %>%
+  group_by(day_of_week) %>%
+  summarise(mean_log_visitors = mean(log1p(visitors)),
+            sd_log_visitors = sd(log1p(visitors))) %>%
+  ggplot(aes(day_of_week, mean_log_visitors, color = day_of_week)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = mean_log_visitors - sd_log_visitors,
+                    ymax = mean_log_visitors + sd_log_visitors,
+                    color = day_of_week), width = 0.5, size = 0.7) +
+  theme(legend.position = "none")+
+  labs(y="Average of the log transformation of number\nof visitors (per day of the week)",x="Day of the Week")
+
+
+```
+
+```{r}
+# Reservation Datetime vs Number of Customers
+group_by(air_visited,visit_date) %>%
+  summarise(count= sum(visitors)) %>%
+  ggplot()+
+  geom_line(mapping = aes(x=visit_date,y=count))+
+  labs(y="Number of Customers")
+```
+
+
+```{r}
+
+# Median Number of Visitors Per Restaurant distribution
+group_by(air_visited,air_store_id) %>%
+  summarise(med = median(visitors)) %>%
+  ggplot()+
+  geom_histogram(mapping=aes(med))+
+  labs(x="Median Number of Visitors Per Restaurant ")
+```
+
+```{r}
+# Histogram of Number of Visitors faceted by Day of the Week
+
+air_visited %>%
+  ggplot(aes(visitors)) +
+  geom_histogram( bins = 20)+
+  facet_wrap(vars(day_of_week))+
+  xlim(0,100)+
+  labs(x="Number of visitors (per Day)")
+
+```
+
+
+```{r}
+
+#Area vs number of People
+group_by(air_visited,air_area_name) %>%
+  summarise(num= sum(visitors)) %>%
+  ggplot()+
+  geom_bar(mapping = aes(x=air_area_name,y=log(num)),stat="identity")+
+  coord_flip()+
+  labs(y="Log tranformation of total Number 0f visitors (per area)",x="Area Name")
+
+```
+
+```{r}
+
+# Distribution of the date of first entry of a restaurant
+group_by(air_visited,air_store_id) %>%
+  summarize(m = min(visit_date)) %>%
+  ggplot()+
+  geom_bar(mapping = aes(m))+
+  labs(x="Date",y="Count",title = "Supports our assumption that a very significant \nNumber of restaurants were added in July 2016")
+
+# Explains the step structure in visit Date vs Number of customers 
+
+```
+
+
+```{r}
+# Number of Visitors vs Day of the Week
+temp <- air_visited
+day_of_week <- factor(temp$day,levels = c("Monday","Tuesday","Wednesday","Thursday","Friday", "Saturday", "Sunday"))
+
+temp %>%
+  group_by(day_of_week) %>%
+  summarise(pdv = median(visitors)) %>%
+  ggplot(aes(x= reorder(day_of_week, -pdv), pdv,fill=day_of_week)) +
+  geom_col() +
+  theme(legend.position = "none", axis.text.x  = element_text(angle=45, hjust=1, vjust=0.9)) +
+  labs(x = "Day of the week", y = "Median Number of visitors",title="Median Number of Visitors increases during the weekend") 
+ 
+
+  
+```
+
+
+
+
+```{r}
+#Number of Visitors vs Month of the Year
+
+air_visit_data %>%
+  mutate(month = month(visit_date, label = TRUE)) %>%
+  group_by(month) %>%
+  summarise(visits = median(visitors)) %>%
+  ggplot(aes(month, visits, fill = month)) +
+  geom_col() +
+  theme(legend.position = "none") +
+  labs(x = "Month", y = "Median visitors",title="Median visitors increase during the holiday months and Summer")
+
+
+```
+
+```{r}
+holidays <- read_csv('date_info.csv', col_types = cols())
+temp <- air_visit_data %>%
+  mutate(calendar_date = visit_date) %>%
+  left_join(holidays, by = "calendar_date")
+
+temp %>%
+  mutate(wday = day_of_week) %>%
+  group_by(wday, holiday_flg) %>%
+  summarise(mean_visitors = mean(visitors)) %>%
+  ggplot(aes(wday, mean_visitors, color = as.character(holiday_flg))) +
+  geom_point(size = 4) +
+  labs(y = "Average number of visitors",x="Day of the week")
+
+
+```
+
+```{r}
+# Number of Restaurants per Genre
+air_store_info %>%
+  group_by(air_genre_name) %>%
+  count() %>%
+  ggplot()+
+  geom_col(aes(reorder(air_genre_name,n,FUN = min),n,fill=air_genre_name))+
+  coord_flip()+
+  theme(legend.position = "none")
+  
+
+```
+
+```{r}
+
+# Number of Restaurants per Area 
+# Only top 20 are displayed
+air_store_info %>%
+  group_by(air_area_name) %>%
+  count() %>%
+  ungroup() %>%
+  top_n(20,n) %>%
+  ggplot()+
+  geom_col(aes(reorder(air_area_name,n,FUN = min),n,fill = air_area_name))+
+  coord_flip()+
+  theme(legend.position = "none")
+
+```
+
+
+
+## HPG Data
+
+```{r}
+
+ print(paste("Number of unique restaurants in the hpg reserve data ",length(unique(hpg_store_info$hpg_store_id))))
+ print(paste("The hpg reserve data contains reservation from ",min(hpg_reserve$reserve_datetime),"to",max(hpg_reserve$reserve_datetime)))
+ print(paste("In the above time period, the total number of reservations is ",length(hpg_reserve$hpg_store_id),"for a total of
+",format(sum(hpg_reserve$reserve_visitors),big.mark=",",scientific=FALSE)," customers"))
+ print(paste("Total number of areas in which reservations were made through hpg reserve",length(unique(hpg_store_info$hpg_area_name))))
+ print(paste("Total number of Genres in which reservations were made through hpg reserve",length(unique(hpg_store_info$hpg_genre_name))))
+
+
+```
+
+```{r}
+
+# Total Number of visitors vs Reservation Date
+group_by(hpg_reserve,reserve_datetime) %>%
+  mutate(reserve_datetime = as.Date(reserve_datetime)) %>%
+  summarise(count= sum(reserve_visitors)) %>%
+  ggplot()+
+  geom_line(mapping = aes(x=reserve_datetime,y=count))+
+  labs(x="Reservation Date",y="Total Number of Customers\n for whom reservations were made")
+
+```
+
+```{r}
+# Total Number of visitors vs Visit Date
+group_by(hpg_reserve,visit_datetime) %>%
+  mutate(visit_datetime = as.Date(visit_datetime)) %>%
+  summarise(count= sum(reserve_visitors)) %>%
+  ggplot()+
+  geom_line(mapping = aes(x=visit_datetime,y=count))+
+  labs(x="Visit Date",y="Total Number of Visitors (on that day)")
+
+```
+
+
+
+```{r}
+
+# Number of Visitors vs time difference from reservation to visitation
+hpg_reserve %>%
+  mutate(hourdiff = difftime(visit_datetime,reserve_datetime,unit="hours")) %>%
+  filter( hourdiff < 24*10) %>%
+  group_by(hourdiff) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot(aes(hourdiff, all_visitors)) +
+  geom_col() +
+  labs(x = "Time interval between time of reservation to time of visit (in hours)",y="Number of Visitors")
+
+```
+
+```{r}
+# Time of Day During which reservations are made distribution
+hpg_reserve %>%
+  mutate(visit_hour = format(as.POSIXct(hpg_reserve$reserve_datetime), format = "%H")) %>%
+  group_by(visit_hour) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot()+
+  geom_col(aes(visit_hour,all_visitors))+
+  labs(x="Hour of the day when reservation was made(in 24 hour format)",y="Total Number of Visitors")
+
+```
+
+
+```{r}
+## Time of the Day for visit for which reservations are made distribution
+
+hpg_reserve %>%
+  mutate(visit_hour = format(as.POSIXct(hpg_reserve$visit_datetime), format = "%H")) %>%
+  group_by(visit_hour) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot()+
+  geom_col(aes(visit_hour,all_visitors))+
+  labs(x="Visit Hour of the day (in 24 hour format)",y="Total Number of Visitors")
+
+```
+
+```{r}
+
+hpg_store_info %>%
+  group_by(hpg_genre_name) %>%
+  count() %>%
+  ggplot()+
+  geom_col(aes(reorder(hpg_genre_name,n,FUN = min),n))+
+  coord_flip()+
+  labs(x="Genre",y="Number of restaurants")
+
+```
+
+```{r}
+
+# Top 25 area vs Number of restaurants
+hpg_store_info %>%
+  group_by(hpg_area_name) %>%
+  count() %>%
+  ungroup() %>%
+  top_n(25,n) %>%
+  ggplot()+
+  geom_col(aes(reorder(hpg_area_name,n,FUN = min),n))+
+  coord_flip()+
+  labs(x="Area Name",y="Number of Restaurants")
+
+```
+
+
+
+## Exploring Relations between Features
+
+
+### Visitors per Genre
+
+
+```{r}
+# Distribution of Visitors accross Genre
+air_visited %>%
+  group_by(visit_date,air_genre_name) %>%
+  summarise(avg_visitors  = mean(visitors)) %>%
+  ungroup() %>%
+  ggplot()+
+  geom_line(mapping = aes(visit_date,avg_visitors,color=air_genre_name))+
+  facet_wrap(vars(air_genre_name))+
+  scale_y_log10()+
+  theme(legend.position = "none")+
+  labs(x="Date of Visit",y="Average Number of Visitors",title = "Distribution of Visitors accross Genre ")
+  
+```
+
+```{r}
+# Number of Visitors vs Genre
+air_visited %>%
+  group_by(day_of_week,air_genre_name) %>%
+  summarise(avg_visitors = mean(visitors)) %>%
+  ggplot()+
+  geom_point(mapping=aes(air_genre_name,avg_visitors,color = day_of_week),size=3)+
+  coord_flip()+
+  labs(x="Genre Name",y="Average Number of Visitors")+
+  guides(color=guide_legend(title="Day of the Week"))
+
+```
+
+```{r}
+# Genre vs Number of Visitors for Air store data
+air_visited %>%
+  ggplot()+
+  geom_histogram(aes(visitors,air_genre_name),stat="identity")+
+  labs(y="Genre Name",x="Number of Visitors")
+
+```
+
+
+
+### Impact of Holidays
+
+```{r}
+
+air_visited %>%
+  ggplot()+
+  geom_boxplot(aes(as.character(holiday_flg), visitors))+
+  scale_y_log10()+
+  labs(x="Holiday",y="Log10 Transformation of Number of visitors")
+
+```
+
+```{r}
+p <- air_visited %>%
+  group_by(day_of_week,holiday_flg) %>%
+  summarise(avg_visitors = mean(visitors)) %>%
+  ggplot()+
+  geom_point(aes(day_of_week,avg_visitors,color =  as.character(holiday_flg)),size= 4)+
+  labs(y="Average Number of Visitors (per restaurant)",x="Day of the week",title=" Average Number of visitors increases during holidays")
+  
+p <- p + guides(color=guide_legend(title="Is it a Holiday ?")) + theme(legend.position="bottom")
+
+p + scale_color_discrete(labels = c("No","Yes"))
+
+```
+
+
+
+
+
+### Restaurants per Area and the effect on number of visitor 
+
+
+```{r}
+# For Air Store Data
+air_store_info %>%
+  mutate(air_area_name = str_sub(air_area_name, 1, 12)) %>%
+  group_by(air_genre_name,air_area_name) %>%
+  ggplot()+
+  geom_count(aes(air_area_name,air_genre_name))+
+  theme(legend.position = "bottom", axis.text.x  = element_text(angle=90, hjust=1, vjust=0.9))+
+  labs(x="Area Name",y="Genre Name")
+```
+
+```{r}
+# For HPG Data
+hpg_store_info %>%
+  mutate(hpg_area_name = str_sub(hpg_area_name, 1, 12)) %>%
+  group_by(hpg_genre_name,hpg_area_name) %>%
+  ggplot()+
+  geom_count(aes(hpg_area_name,hpg_genre_name))+
+  theme(legend.position = "bottom", axis.text.x  = element_text(angle=90, hjust=1, vjust=0.9))+
+  labs(x="Area Name",y="Genre Name")
+
+```
+
+
+```{r}
+
+# For Air Store
+air_store_info %>%
+  group_by(air_genre_name,air_area_name) %>%
+  count() %>%
+  ggplot() +
+  geom_boxplot(aes(reorder(air_genre_name,n,FUN=mean),n))+
+  geom_jitter(aes(reorder(air_genre_name,n,FUN=mean),n),color= "red")+
+  scale_y_log10()+
+  coord_flip()+
+  labs(x="Genre Name",y="Number of Restaurants per area")
+  
+
+```
+
+```{r}
+# For HPG
+hpg_store_info %>%
+  group_by(hpg_genre_name,hpg_area_name) %>%
+  count() %>%
+  ggplot() +
+  geom_boxplot(aes(reorder(hpg_genre_name,n,FUN=mean),n))+
+  geom_jitter(aes(reorder(hpg_genre_name,n,FUN=mean),n),color= "red")+
+  scale_y_log10()+
+  coord_flip()+
+  labs(x="Genre Name",y="Number of Restaurants per area")
+
+```
+
+
+```{r}
+# For Air Store
+air_store_info %>%
+  group_by(air_genre_name, air_area_name) %>%
+  count() %>%
+  ggplot(aes(n)) +
+  geom_histogram(binwidth = 1) +
+  labs(x = "Genres per area")
+```
+
+
+```{r}
+
+# For HPG
+hpg_store_info %>%
+  group_by(hpg_genre_name, hpg_area_name) %>%
+  count() %>%
+  ggplot(aes(n)) +
+  geom_histogram(binwidth = 1) +
+  labs(x = "Genres per area")
+
+
+```
+
+
+
+````{r}
+library(modelr)
+
+m <- lm(visitors~.,data=air_visited)
+
+step(m)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
